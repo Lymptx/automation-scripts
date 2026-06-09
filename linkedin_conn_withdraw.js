@@ -2,8 +2,9 @@
 // Navigate to: https://www.linkedin.com/mynetwork/invitation-manager/sent/
 // Open DevTools console (F12), paste this script, and press Enter.
 //
-// v6: Log how long ago the request was sent alongside the person's name.
-//     Console now shows: "Withdrawn (1): Jane Smith — sent 2 months ago"
+// v7: Sort invitations oldest-first before withdrawing.
+//     Each link is mapped to an age in milliseconds, then sorted descending
+//     so the oldest requests are processed first.
 
 (async function bulkWithdrawOldLinkedInInvitations() {
     const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -14,18 +15,32 @@
         await delay(1500);
     }
 
-    const links = Array.from(document.querySelectorAll("[aria-label*='Withdraw invitation sent to']"));
-    console.log(`Found ${links.length} total invitations`);
+    const unitToMs = {
+        minute: 60 * 1000,
+        hour:   60 * 60 * 1000,
+        day:    24 * 60 * 60 * 1000,
+        week:   7  * 24 * 60 * 60 * 1000,
+        month:  30 * 24 * 60 * 60 * 1000,
+        year:   365 * 24 * 60 * 60 * 1000,
+    };
+
+    // Build list with parsed age, then sort oldest first
+    const links = Array.from(document.querySelectorAll("[aria-label*='Withdraw invitation sent to']"))
+        .map(link => {
+            const card = link.closest("li") || link.parentElement?.parentElement?.parentElement;
+            const cardText = card?.innerText?.toLowerCase() ?? "";
+            const match = cardText.match(/sent (\d+) (minute|hour|day|week|month|year)/);
+            const ageMs = match ? parseInt(match[1]) * unitToMs[match[2]] : 0;
+            return { link, match, ageMs };
+        })
+        .filter(({ match }) => match !== null)
+        .sort((a, b) => b.ageMs - a.ageMs); // oldest first
+
+    console.log(`Found ${links.length} total invitations — processing oldest first`);
 
     let withdrawn = 0, skipped = 0;
 
-    for (const link of links) {
-        const card = link.closest("li") || link.parentElement?.parentElement?.parentElement;
-        const cardText = card?.innerText?.toLowerCase() ?? "";
-        const match = cardText.match(/sent (\d+) (minute|hour|day|week|month|year)/);
-
-        if (!match) { skipped++; continue; }
-
+    for (const { link, match, ageMs } of links) {
         const num = parseInt(match[1]);
         const unit = match[2];
         const isOld = unit === "month" || unit === "year" || (unit === "week" && num >= 3);
@@ -40,14 +55,12 @@
             link.scrollIntoView({ behavior: "smooth", block: "center" });
             await delay(800);
 
-            // Block A-tag navigation so the dialog has time to render
             const blocker = (e) => { if (e.target.tagName === "A") e.preventDefault(); };
             document.addEventListener("click", blocker, true);
             link.click();
             await delay(2000);
             document.removeEventListener("click", blocker, true);
 
-            // Confirm button lives inside data-testid="dialog-content"
             const confirmBtn = document.querySelector(
                 "[data-testid='dialog-content'] button[aria-label*='Withdraw invitation']"
             );
