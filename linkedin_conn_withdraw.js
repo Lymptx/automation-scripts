@@ -2,9 +2,13 @@
 // Navigate to: https://www.linkedin.com/mynetwork/invitation-manager/sent/
 // Open DevTools console (F12), paste this script, and press Enter.
 //
-// v10: Smart scroll — instead of a fixed loop, keep scrolling until the loaded
-//      invitation count hasn't changed for 5 consecutive rounds. This ensures
-//      everything is loaded regardless of how many invitations you have.
+// v11 (final): Randomize all scroll steps and action delays to mimic human
+//     behaviour and reduce the chance of LinkedIn rate-limiting the session.
+//     Scroll step:  400–800 px (random)
+//     Scroll delay: 6–12 ms  (random)
+//     Pre-click:    600–1000 ms
+//     Post-click:   1500–2500 ms (dialog wait)
+//     Post-confirm: 1800–2500 ms
 
 // Inject stop button into the page
 window._stopWithdraw = false;
@@ -16,18 +20,19 @@ document.body.appendChild(stopBtn);
 
 (async function bulkWithdrawOldLinkedInInvitations() {
     const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+    const rand  = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 
-    // Smart scroll: keep going until no new invitations load for 5 rounds
+    // Smart scroll with randomized steps to mimic human scrolling
     const main = document.querySelector("main");
     console.log("Scrolling to load all invitations...");
     let lastCount = 0;
     let noNewRounds = 0;
     while (noNewRounds < 5) {
         for (let i = 0; i < 10; i++) {
-            main.scrollTo(0, main.scrollTop + 600);
-            await delay(150);
+            main.scrollTo(0, main.scrollTop + rand(400, 800));
+            await delay(rand(6, 12));
         }
-        await delay(1000);
+        await delay(rand(800, 1200));
         const currentCount = document.querySelectorAll("[aria-label*='Withdraw invitation sent to']").length;
         console.log(`Loaded ${currentCount} invitations so far...`);
         if (currentCount === lastCount) {
@@ -80,12 +85,12 @@ document.body.appendChild(stopBtn);
 
         try {
             link.scrollIntoView({ behavior: "smooth", block: "center" });
-            await delay(800);
+            await delay(rand(600, 1000));
 
             const blocker = (e) => { if (e.target.tagName === "A") e.preventDefault(); };
             document.addEventListener("click", blocker, true);
             link.click();
-            await delay(2000);
+            await delay(rand(1500, 2500));
             document.removeEventListener("click", blocker, true);
 
             const confirmBtn = document.querySelector(
@@ -96,8 +101,8 @@ document.body.appendChild(stopBtn);
                 confirmBtn.click();
                 withdrawn++;
                 const name = link.getAttribute("aria-label").replace("Withdraw invitation sent to", "").trim();
-                console.log(`Withdrawn (${withdrawn}): ${name} � sent ${num} ${unit}s ago`);
-                await delay(2000);
+                console.log(`Withdrawn (${withdrawn}): ${name} — sent ${num} ${unit}s ago`);
+                await delay(rand(1800, 2500));
             } else {
                 console.warn(`Confirm button not found for: ${link.getAttribute("aria-label")}`);
             }
@@ -106,5 +111,5 @@ document.body.appendChild(stopBtn);
         }
     }
 
-    console.log(`Done � Withdrawn: ${withdrawn} | Skipped: ${skipped}`);
+    console.log(`Done — Withdrawn: ${withdrawn} | Skipped: ${skipped}`);
 })();
