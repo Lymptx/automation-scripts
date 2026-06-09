@@ -2,9 +2,9 @@
 // Navigate to: https://www.linkedin.com/mynetwork/invitation-manager/sent/
 // Open DevTools console (F12), paste this script, and press Enter.
 //
-// v9: Fixed scrolling. window.scrollTo() had no effect — LinkedIn's scrollable
-//     container is <main>, not the window. Now scrolls main in 600px steps.
-//     Use helpers/scroll_test.js to test scrolling in isolation.
+// v10: Smart scroll — instead of a fixed loop, keep scrolling until the loaded
+//      invitation count hasn't changed for 5 consecutive rounds. This ensures
+//      everything is loaded regardless of how many invitations you have.
 
 // Inject stop button into the page
 window._stopWithdraw = false;
@@ -17,21 +17,27 @@ document.body.appendChild(stopBtn);
 (async function bulkWithdrawOldLinkedInInvitations() {
     const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-    // Scroll <main> (not window) to trigger LinkedIn's infinite scroll loader
+    // Smart scroll: keep going until no new invitations load for 5 rounds
     const main = document.querySelector("main");
     console.log("Scrolling to load all invitations...");
-    let position = 0;
-    const step = 600;
-    while (true) {
-        position += step;
-        main.scrollTo(0, position);
-        await delay(150);
-        if (position >= main.scrollHeight - 1000) {
-            await delay(1000);
-            if (position >= main.scrollHeight) break;
+    let lastCount = 0;
+    let noNewRounds = 0;
+    while (noNewRounds < 5) {
+        for (let i = 0; i < 10; i++) {
+            main.scrollTo(0, main.scrollTop + 600);
+            await delay(150);
+        }
+        await delay(1000);
+        const currentCount = document.querySelectorAll("[aria-label*='Withdraw invitation sent to']").length;
+        console.log(`Loaded ${currentCount} invitations so far...`);
+        if (currentCount === lastCount) {
+            noNewRounds++;
+        } else {
+            noNewRounds = 0;
+            lastCount = currentCount;
         }
     }
-    console.log("Scrolling done — found", document.querySelectorAll("[aria-label*='Withdraw invitation sent to']").length, "invitations");
+    console.log("Scrolling done — found", lastCount, "invitations");
 
     const unitToMs = {
         minute: 60 * 1000,
