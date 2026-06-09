@@ -2,8 +2,9 @@
 // Navigate to: https://www.linkedin.com/mynetwork/invitation-manager/sent/
 // Open DevTools console (F12), paste this script, and press Enter.
 //
-// v8: Added a red "Stop" button fixed to the top-right corner of the page.
-//     Click it at any time to stop after the current withdrawal completes.
+// v9: Fixed scrolling. window.scrollTo() had no effect — LinkedIn's scrollable
+//     container is <main>, not the window. Now scrolls main in 600px steps.
+//     Use helpers/scroll_test.js to test scrolling in isolation.
 
 // Inject stop button into the page
 window._stopWithdraw = false;
@@ -16,11 +17,21 @@ document.body.appendChild(stopBtn);
 (async function bulkWithdrawOldLinkedInInvitations() {
     const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-    // Scroll to load all invitations
-    for (let i = 0; i < 20; i++) {
-        window.scrollTo(0, document.body.scrollHeight);
-        await delay(1500);
+    // Scroll <main> (not window) to trigger LinkedIn's infinite scroll loader
+    const main = document.querySelector("main");
+    console.log("Scrolling to load all invitations...");
+    let position = 0;
+    const step = 600;
+    while (true) {
+        position += step;
+        main.scrollTo(0, position);
+        await delay(150);
+        if (position >= main.scrollHeight - 1000) {
+            await delay(1000);
+            if (position >= main.scrollHeight) break;
+        }
     }
+    console.log("Scrolling done — found", document.querySelectorAll("[aria-label*='Withdraw invitation sent to']").length, "invitations");
 
     const unitToMs = {
         minute: 60 * 1000,
