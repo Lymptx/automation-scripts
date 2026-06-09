@@ -2,13 +2,11 @@
 // Navigate to: https://www.linkedin.com/mynetwork/invitation-manager/sent/
 // Open DevTools console (F12), paste this script, and press Enter.
 //
-// This version uses the invitation card selector and looks for <button> elements.
-// NOTE: This approach did not work — LinkedIn's cards were not found by these selectors.
-//       See later commits for the working version.
+// v2: Switched from <button> to <span> elements — LinkedIn renders "Withdraw"
+//     as a span, not a native button. This gets 280 results instead of 0.
+// NOTE: Card traversal still needs fixing — see next commit.
 
 (async function bulkWithdrawOldLinkedInInvitations() {
-    console.log("Starting withdrawal of invitations older than 3 weeks...");
-
     const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
     // Scroll to load all invitations
@@ -17,51 +15,45 @@
         await delay(1500);
     }
 
-    // Try to grab invitation cards by known LinkedIn class names / data attributes
-    const cards = Array.from(document.querySelectorAll(
-        ".invitation-card, [data-view-name='invitation-manager-sent-invitation']"
-    ));
+    // LinkedIn renders "Withdraw" as a <span>, not a <button>
+    const withdrawSpans = Array.from(document.querySelectorAll("span"))
+        .filter(s => s.innerText.trim() === "Withdraw");
 
-    console.log(`Found ${cards.length} total invitation cards.`);
+    console.log(`Found ${withdrawSpans.length} Withdraw buttons total`);
 
-    let withdrawnCount = 0;
-    let skippedCount = 0;
+    let withdrawn = 0, skipped = 0;
 
-    for (const card of cards) {
-        // Find the time text within the card
-        const timeEl = card.querySelector("time, [class*='time'], [class*='subtitle'], span");
-        const timeText = timeEl?.innerText?.toLowerCase() ?? "";
+    for (const span of withdrawSpans) {
+        // Walk up to the card — need to find the right level (see next commit)
+        const card = span.closest("li") || span.closest("[class*='card']") || span.parentElement;
+        const cardText = card?.innerText?.toLowerCase() ?? "";
 
-        // Determine if older than 3 weeks based on displayed text
         const isOld =
-            timeText.includes("month") ||
-            timeText.includes("year") ||
-            (timeText.includes("week") && parseInt(timeText) >= 3);
+            cardText.includes("sent") && (
+                cardText.includes("month") ||
+                cardText.includes("year") ||
+                (cardText.match(/sent (\d+) week/) && parseInt(cardText.match(/sent (\d+) week/)[1]) >= 3)
+            );
 
         if (!isOld) {
-            skippedCount++;
-            console.log(`Skipping (recent): "${timeText}"`);
+            skipped++;
+            console.log(`Skipping: "${cardText.match(/sent .+/)?.[0] ?? "unknown"}"`);
             continue;
         }
 
-        const withdrawBtn = Array.from(card.querySelectorAll("button"))
-            .find(b => b.innerText.trim() === "Withdraw");
-
-        if (!withdrawBtn) continue;
-
         try {
-            withdrawBtn.scrollIntoView({ behavior: "smooth", block: "center" });
+            span.scrollIntoView({ behavior: "smooth", block: "center" });
             await delay(800);
-            withdrawBtn.click();
+            span.click();
             await delay(1000);
 
-            // Wait for confirm dialog
             let confirmBtn = null;
             for (let i = 0; i < 10; i++) {
-                confirmBtn = Array.from(document.querySelectorAll("button"))
+                confirmBtn = Array.from(document.querySelectorAll("button, span"))
                     .find(b =>
                         b.innerText.trim() === "Withdraw" &&
-                        b.getAttribute("aria-label")?.includes("invitation sent")
+                        (b.getAttribute("aria-label")?.includes("invitation") ||
+                         b.closest("[role='dialog']"))
                     );
                 if (confirmBtn) break;
                 await delay(500);
@@ -69,16 +61,16 @@
 
             if (confirmBtn) {
                 confirmBtn.click();
-                withdrawnCount++;
-                console.log(`Withdrawn (${withdrawnCount}): "${timeText}"`);
+                withdrawn++;
+                console.log(`Withdrawn (${withdrawn}): "${cardText.match(/sent .+/)?.[0]}"`);
                 await delay(2000);
             } else {
-                console.warn(`Confirm button not found for: "${timeText}"`);
+                console.warn(`Confirm button not found`);
             }
         } catch (err) {
             console.error("Error:", err);
         }
     }
 
-    console.log(`Done. Withdrawn: ${withdrawnCount} | Skipped (recent): ${skippedCount}`);
+    console.log(`Done — Withdrawn: ${withdrawn} | Skipped: ${skipped}`);
 })();
