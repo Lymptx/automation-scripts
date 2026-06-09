@@ -2,9 +2,16 @@
 // Navigate to: https://www.linkedin.com/mynetwork/invitation-manager/sent/
 // Open DevTools console (F12), paste this script, and press Enter.
 //
-// v7: Sort invitations oldest-first before withdrawing.
-//     Each link is mapped to an age in milliseconds, then sorted descending
-//     so the oldest requests are processed first.
+// v8: Added a red "Stop" button fixed to the top-right corner of the page.
+//     Click it at any time to stop after the current withdrawal completes.
+
+// Inject stop button into the page
+window._stopWithdraw = false;
+const stopBtn = document.createElement("button");
+stopBtn.innerText = "Stop Withdraw";
+stopBtn.style.cssText = "position:fixed;top:20px;right:20px;z-index:99999;padding:10px 16px;background:red;color:white;font-size:14px;border:none;border-radius:8px;cursor:pointer;";
+stopBtn.onclick = () => { window._stopWithdraw = true; stopBtn.innerText = "Stopping..."; };
+document.body.appendChild(stopBtn);
 
 (async function bulkWithdrawOldLinkedInInvitations() {
     const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -36,18 +43,21 @@
         .filter(({ match }) => match !== null)
         .sort((a, b) => b.ageMs - a.ageMs); // oldest first
 
-    console.log(`Found ${links.length} total invitations — processing oldest first`);
+    console.log(`Found ${links.length} total invitations ï¿½ processing oldest first`);
 
     let withdrawn = 0, skipped = 0;
 
     for (const { link, match, ageMs } of links) {
+        // Check stop flag at the top of each iteration
+        if (window._stopWithdraw) { console.log("Stopped by user"); break; }
+
         const num = parseInt(match[1]);
         const unit = match[2];
         const isOld = unit === "month" || unit === "year" || (unit === "week" && num >= 3);
 
         if (!isOld) {
             skipped++;
-            console.log(`Skipping: ${link.getAttribute("aria-label").replace("Withdraw invitation sent to", "").trim()} — sent ${num} ${unit}s ago`);
+            console.log(`Skipping: ${link.getAttribute("aria-label").replace("Withdraw invitation sent to", "").trim()} ï¿½ sent ${num} ${unit}s ago`);
             continue;
         }
 
@@ -69,7 +79,7 @@
                 confirmBtn.click();
                 withdrawn++;
                 const name = link.getAttribute("aria-label").replace("Withdraw invitation sent to", "").trim();
-                console.log(`Withdrawn (${withdrawn}): ${name} — sent ${num} ${unit}s ago`);
+                console.log(`Withdrawn (${withdrawn}): ${name} ï¿½ sent ${num} ${unit}s ago`);
                 await delay(2000);
             } else {
                 console.warn(`Confirm button not found for: ${link.getAttribute("aria-label")}`);
@@ -79,5 +89,5 @@
         }
     }
 
-    console.log(`Done — Withdrawn: ${withdrawn} | Skipped: ${skipped}`);
+    console.log(`Done ï¿½ Withdrawn: ${withdrawn} | Skipped: ${skipped}`);
 })();
