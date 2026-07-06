@@ -95,6 +95,29 @@ def find_latest_export(directory):
     return matches[0] if matches else None
 
 
+def write_solution_file(target_dir, sub):
+    """Write a submission's code to <target_dir>/<filename>.
+
+    Returns (path, status) where status is "written", "unchanged" (identical file
+    already there), or "skipped" (no code in the export).
+    """
+    code = sub.get("code")
+    if not code:
+        return None, "skipped"
+
+    if not code.endswith("\n"):
+        code += "\n"
+
+    path = Path(target_dir) / filename_for(sub)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if path.exists() and path.read_text(encoding="utf-8") == code:
+        return path, "unchanged"
+
+    path.write_text(code, encoding="utf-8")
+    return path, "written"
+
+
 def load_submissions(json_path):
     """Load the export and return its submissions sorted oldest-first.
 
@@ -131,10 +154,24 @@ def main(argv=None):
 
     submissions = load_submissions(json_path)
     print(f"Loaded {len(submissions)} submission(s) from {json_path}\n")
+
+    target_dir = Path(".")
+    written = unchanged = skipped = 0
     for sub in submissions:
-        print(
-            f"  {sub.get('date')} {sub.get('time', '')} - {filename_for(sub)}"
-        )
+        path, status = write_solution_file(target_dir, sub)
+        if status == "written":
+            written += 1
+        elif status == "unchanged":
+            unchanged += 1
+        else:
+            skipped += 1
+        label = path.name if path else filename_for(sub)
+        print(f"  [{status}] {sub.get('date')} {sub.get('time', '')} - {label}")
+
+    print(
+        f"\nDone. {written} written, {unchanged} unchanged, {skipped} skipped "
+        f"(no code)."
+    )
     return 0
 
 
