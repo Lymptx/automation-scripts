@@ -30,7 +30,7 @@
   // ---------------- CONFIG ----------------
   // Leave START_DATE as null to auto-resume from the last run (recommended
   // after the first run). Set it explicitly the first time, e.g. "2026-06-15".
-  const START_DATE = "2026-06-15";
+  const START_DATE = "2026-06-08";
   const KEEP_MODE = "earliest";   // "earliest" = first AC per problem in range | "all" = every AC submission
   const REQUEST_DELAY_MS = 400;   // delay between requests, be polite to avoid rate limits
   const LAST_RUN_KEY = "lc_export_last_run_date";
@@ -135,11 +135,12 @@
   // ---------------- 3. Fetch full code + question info ----------------
   console.log("Step 2/3: fetching code + question details for each submission...");
 
+  // Only fields that actually exist on submissionDetails. The old query asked for
+  // question.questionFrontendId / question.title, which do NOT exist on this type -
+  // one invalid field makes GraphQL reject the whole query, so every submission failed.
   const SUBMISSION_DETAILS_QUERY = `
     query submissionDetails($submissionId: Int!) {
       submissionDetails(submissionId: $submissionId) {
-        runtime
-        memory
         code
         timestamp
         lang {
@@ -147,14 +148,40 @@
           verboseName
         }
         question {
-          questionId
-          questionFrontendId
-          title
           titleSlug
         }
       }
     }
   `;
+
+  // The frontend number (e.g. 2161) and clean title come from the public question query.
+  const QUESTION_META_QUERY = `
+    query questionMeta($titleSlug: String!) {
+      question(titleSlug: $titleSlug) {
+        questionId
+        questionFrontendId
+        title
+        titleSlug
+      }
+    }
+  `;
+
+  // Look up problem metadata once per slug, then reuse it for every submission.
+  const metaCache = new Map();
+  async function getQuestionMeta(slug) {
+    if (!slug) return null;
+    if (metaCache.has(slug)) return metaCache.get(slug);
+    let meta = null;
+    try {
+      const data = await graphql(QUESTION_META_QUERY, { titleSlug: slug });
+      meta = data.question ?? null;
+    } catch (e) {
+      console.warn(`  [meta fail] ${slug}:`, e.message);
+    }
+    metaCache.set(slug, meta);
+    await sleep(REQUEST_DELAY_MS);
+    return meta;
+  }
 
   const results = [];
 
@@ -166,14 +193,15 @@
       const d = data.submissionDetails;
       const dateObj = new Date(sub.timestamp * 1000);
       const dateStr = toLocalYMD(dateObj);
-      const slug = d?.question?.titleSlug ?? null;
+      const slug = d?.question?.titleSlug ?? sub.title_slug ?? null;
+      const meta = await getQuestionMeta(slug);
 
       results.push({
         date: dateStr,
         timestamp: sub.timestamp,
-        questionId: d?.question?.questionId ?? null,
-        frontendId: d?.question?.questionFrontendId ?? null,
-        title: d?.question?.title ?? sub.title,
+        questionId: meta?.questionId ?? null,
+        frontendId: meta?.questionFrontendId ?? null,
+        title: meta?.title ?? sub.title,
         titleSlug: slug,
         language: d?.lang?.name ?? sub.lang,
         code: d?.code ?? null,
@@ -181,7 +209,7 @@
         url: slug ? `https://leetcode.com/problems/${slug}/submissions/${sub.id}/` : null,
       });
 
-      console.log(`  [ok] ${dateStr} - ${d?.question?.title ?? sub.title}`);
+      console.log(`  [ok] ${dateStr} - ${meta?.title ?? sub.title}`);
     } catch (e) {
       console.warn(`  [fail] submission ${sub.id} (${sub.title}):`, e.message);
     }
