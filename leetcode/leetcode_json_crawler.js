@@ -31,7 +31,7 @@
   // Leave START_DATE as null to auto-resume from the last run (recommended
   // after the first run). Set it explicitly the first time, e.g. "2026-06-15".
   const START_DATE = "2026-06-08";
-  const KEEP_MODE = "earliest";   // "earliest" = first AC per problem in range | "all" = every AC submission
+  const KEEP_MODE = "latest";     // "latest" = most recent AC per problem in range | "all" = every AC submission
   const MIN_DELAY_MS = 800;       // randomized delay between requests (lower bound)
   const MAX_DELAY_MS = 1600;      // randomized delay between requests (upper bound)
   const LAST_RUN_KEY = "lc_export_last_run_date";
@@ -163,10 +163,11 @@
   if (KEEP_MODE === "all") {
     chosen = accepted;
   } else {
+    // KEEP_MODE "latest": keep the most recent accepted submission per problem.
     const byTitle = {};
     for (const sub of accepted) {
       const existing = byTitle[sub.title];
-      if (!existing || sub.timestamp < existing.timestamp) {
+      if (!existing || sub.timestamp > existing.timestamp) {
         byTitle[sub.title] = sub;
       }
     }
@@ -231,13 +232,26 @@
 
   for (const sub of chosen) {
     try {
-      const data = await graphql(SUBMISSION_DETAILS_QUERY, {
-        submissionId: Number(sub.id),
-      });
-      const d = data.submissionDetails;
-      const dateObj = new Date(sub.timestamp * 1000);
-      const dateStr = toLocalYMD(dateObj);
-      const slug = d?.question?.titleSlug ?? sub.title_slug ?? null;
+      const dateStr = toLocalYMD(new Date(sub.timestamp * 1000));
+      let slug = sub.title_slug ?? null;
+      let langName = sub.lang ?? null;
+      // The /api/submissions/ dump usually already carries the full source.
+      let code =
+        typeof sub.code === "string" && sub.code.trim() ? sub.code : null;
+
+      // Only pay for a submissionDetails call when the dump had no code.
+      if (!code) {
+        const data = await graphql(
+          SUBMISSION_DETAILS_QUERY,
+          { submissionId: Number(sub.id) },
+          `submissionDetails ${sub.id}`
+        );
+        const d = data.submissionDetails;
+        code = d?.code ?? null;
+        slug = d?.question?.titleSlug ?? slug;
+        langName = d?.lang?.name ?? langName;
+      }
+
       const meta = await getQuestionMeta(slug);
 
       results.push({
@@ -247,8 +261,8 @@
         frontendId: meta?.questionFrontendId ?? null,
         title: meta?.title ?? sub.title,
         titleSlug: slug,
-        language: d?.lang?.name ?? sub.lang,
-        code: d?.code ?? null,
+        language: langName,
+        code,
         submissionId: sub.id,
         url: slug ? `https://leetcode.com/problems/${slug}/submissions/${sub.id}/` : null,
       });
