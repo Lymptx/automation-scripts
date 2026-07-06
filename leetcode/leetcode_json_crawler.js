@@ -86,6 +86,24 @@
     return `${y}-${m}-${day}`;
   }
 
+  function toLocalHMS(d) {
+    const h = String(d.getHours()).padStart(2, "0");
+    const mi = String(d.getMinutes()).padStart(2, "0");
+    const s = String(d.getSeconds()).padStart(2, "0");
+    return `${h}:${mi}:${s}`;
+  }
+
+  // Full local datetime with timezone offset, e.g. "2026-06-08T14:32:07+02:00".
+  // This is the format git accepts directly for GIT_AUTHOR_DATE when backdating.
+  function toLocalDateTime(d) {
+    const offMin = -d.getTimezoneOffset();
+    const sign = offMin >= 0 ? "+" : "-";
+    const abs = Math.abs(offMin);
+    const offH = String(Math.floor(abs / 60)).padStart(2, "0");
+    const offM = String(abs % 60).padStart(2, "0");
+    return `${toLocalYMD(d)}T${toLocalHMS(d)}${sign}${offH}:${offM}`;
+  }
+
   function getCookie(name) {
     const m = document.cookie.match(new RegExp("(?:^|; )" + name + "=([^;]*)"));
     return m ? decodeURIComponent(m[1]) : null;
@@ -235,7 +253,8 @@
 
   for (const sub of chosen) {
     try {
-      const dateStr = toLocalYMD(new Date(sub.timestamp * 1000));
+      const dateObj = new Date(sub.timestamp * 1000);
+      const dateStr = toLocalYMD(dateObj);
       let slug = sub.title_slug ?? null;
       let langName = sub.lang ?? null;
       // The /api/submissions/ dump usually already carries the full source.
@@ -268,6 +287,8 @@
 
       results.push({
         date: dateStr,
+        time: toLocalHMS(dateObj),
+        datetime: toLocalDateTime(dateObj),
         timestamp: sub.timestamp,
         questionId: meta?.questionId ?? null,
         frontendId,
@@ -280,7 +301,7 @@
         markdownTitle,
       });
 
-      console.log(`  [ok] ${dateStr} - ${title}`);
+      console.log(`  [ok] ${dateStr} ${toLocalHMS(dateObj)} - ${title}`);
     } catch (e) {
       console.warn(`  [fail] submission ${sub.id} (${sub.title}):`, e.message);
     }
