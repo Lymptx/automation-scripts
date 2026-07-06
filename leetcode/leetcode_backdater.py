@@ -30,6 +30,60 @@ from pathlib import Path
 # titleSlug, language, date, time.
 COMMIT_MESSAGE_TEMPLATE = "{frontendId}. {title}"
 
+# LeetCode language name -> source file extension.
+LANG_EXTENSIONS = {
+    "python": ".py",
+    "python3": ".py",
+    "pythondata": ".py",
+    "c": ".c",
+    "cpp": ".cpp",
+    "csharp": ".cs",
+    "java": ".java",
+    "javascript": ".js",
+    "typescript": ".ts",
+    "php": ".php",
+    "swift": ".swift",
+    "kotlin": ".kt",
+    "dart": ".dart",
+    "golang": ".go",
+    "ruby": ".rb",
+    "scala": ".scala",
+    "rust": ".rs",
+    "racket": ".rkt",
+    "erlang": ".erl",
+    "elixir": ".ex",
+    "bash": ".sh",
+    "mysql": ".sql",
+    "mssql": ".sql",
+    "oraclesql": ".sql",
+    "postgresql": ".sql",
+}
+
+# Characters that are illegal in Windows filenames (also unsafe elsewhere).
+_ILLEGAL_FILENAME_CHARS = '<>:"/\\|?*'
+
+
+def ext_for_language(language):
+    """Map a LeetCode language name to a file extension (default .txt)."""
+    return LANG_EXTENSIONS.get((language or "").lower(), ".txt")
+
+
+def sanitize_filename(name):
+    """Strip characters that are illegal in filenames and trailing dots/spaces."""
+    cleaned = "".join(c for c in name if c not in _ILLEGAL_FILENAME_CHARS)
+    return cleaned.strip().rstrip(".").strip() or "untitled"
+
+
+def filename_for(sub):
+    """Build the solution filename, e.g. '2161. Partition Array....py'.
+
+    Falls back to the slug or title when the frontend number is missing.
+    """
+    frontend_id = sub.get("frontendId")
+    title = sub.get("title") or sub.get("titleSlug") or "untitled"
+    stem = f"{frontend_id}. {title}" if frontend_id else title
+    return sanitize_filename(stem) + ext_for_language(sub.get("language"))
+
 
 def find_latest_export(directory):
     """Return the most recently modified leetcode_submissions_*.json, or None."""
@@ -79,8 +133,7 @@ def main(argv=None):
     print(f"Loaded {len(submissions)} submission(s) from {json_path}\n")
     for sub in submissions:
         print(
-            f"  {sub.get('date')} {sub.get('time', '')} - "
-            f"{sub.get('frontendId')}. {sub.get('title')} [{sub.get('language')}]"
+            f"  {sub.get('date')} {sub.get('time', '')} - {filename_for(sub)}"
         )
     return 0
 
