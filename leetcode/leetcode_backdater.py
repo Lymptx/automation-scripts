@@ -162,6 +162,17 @@ def git_commit_backdated(repo_dir, path, message, date_str):
     return True
 
 
+def is_git_repo(repo_dir):
+    """True if ``repo_dir`` is inside a git work tree."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=repo_dir,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return result.returncode == 0
+
+
 def load_submissions(json_path):
     """Load the export and return its submissions sorted oldest-first.
 
@@ -183,30 +194,95 @@ def main(argv=None):
     parser.add_argument(
         "--json",
         help="Path to the crawler's JSON export "
-        "(default: newest leetcode_submissions_*.json in the current directory).",
+        "(default: newest leetcode_submissions_*.json in --repo).",
+    )
+    parser.add_argument(
+        "--repo",
+        default=".",
+        help="Target solutions repository to commit into (default: current directory).",
+    )
+    parser.add_argument(
+        "--subdir",
+        default="",
+        help="Optional subfolder inside the repo to place solution files in.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would happen; write no files and make no commits.",
+    )
+    parser.add_argument(
+        "--init",
+        action="store_true",
+        help="Run 'git init' in --repo if it is not already a git repository.",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip the confirmation prompt (non-interactive).",
     )
     args = parser.parse_args(argv)
 
-    json_path = args.json or find_latest_export(".")
+    repo_dir = Path(args.repo).resolve()
+    if not repo_dir.is_dir():
+        print(f"--repo {repo_dir} is not a directory.", file=sys.stderr)
+        return 1
+
+    json_path = args.json or find_latest_export(repo_dir) or find_latest_export(".")
     if not json_path or not Path(json_path).exists():
         print(
-            "No export found. Pass --json <file> or run this from a directory "
-            "containing a leetcode_submissions_*.json file.",
+            "No export found. Pass --json <file>, or put a "
+            "leetcode_submissions_*.json in the target repo.",
             file=sys.stderr,
         )
         return 1
 
-    submissions = load_submissions(json_path)
-    print(f"Loaded {len(submissions)} submission(s) from {json_path}\n")
+    # Make sure we have a repo to commit into (unless just previewing).
+    if not is_git_repo(repo_dir):
+        if args.init and not args.dry_run:
+            print(f"Initializing git repository in {repo_dir} ...")
+            subprocess.run(["git", "init"], cwd=repo_dir, check=True)
+        elif not args.dry_run:
+            print(
+                f"{repo_dir} is not a git repository. Pass --init to create one, "
+                f"or --dry-run to preview.",
+                file=sys.stderr,
+            )
+            return 1
 
-    repo_dir = Path(".")
+    target_dir = repo_dir / args.subdir if args.subdir else repo_dir
+    submissions = load_submissions(json_path)
+
+    print(f"Export : {json_path}")
+    print(f"Repo   : {repo_dir}")
+    print(f"Target : {target_dir}")
+    print(f"Commits: {len(submissions)} problem(s), oldest-first, backdated")
+    print(f"Mode   : {'DRY RUN (no changes)' if args.dry_run else 'LIVE'}\n")
+
+    if not args.dry_run and not args.yes:
+        reply = input("Create these backdated commits? [y/N] ").strip().lower()
+        if reply not in ("y", "yes"):
+            print("Aborted.")
+            return 0
+
     committed = unchanged = skipped = failed = 0
     for sub in submissions:
-        path, status = write_solution_file(repo_dir, sub)
         stamp = f"{sub.get('date')} {sub.get('time', '')}"
+        name = filename_for(sub)
+
+        if args.dry_run:
+            if not sub.get("code"):
+                skipped += 1
+                print(f"  [skip] {stamp} - {name} (no code)")
+            else:
+                committed += 1
+                print(f"  [would commit] {stamp} - {name}")
+            continue
+
+        path, status = write_solution_file(target_dir, sub)
         if status == "skipped":
             skipped += 1
-            print(f"  [skip] {stamp} - {filename_for(sub)} (no code)")
+            print(f"  [skip] {stamp} - {name} (no code)")
             continue
         if status == "unchanged":
             unchanged += 1
@@ -229,8 +305,9 @@ def main(argv=None):
             unchanged += 1
             print(f"  [unchanged] {stamp} - {path.name}")
 
+    verb = "would commit" if args.dry_run else "committed"
     print(
-        f"\nDone. {committed} committed, {unchanged} unchanged, "
+        f"\nDone. {committed} {verb}, {unchanged} unchanged, "
         f"{skipped} skipped (no code), {failed} failed."
     )
     return 0
