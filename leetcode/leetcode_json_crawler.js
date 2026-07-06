@@ -32,7 +32,8 @@
   // after the first run). Set it explicitly the first time, e.g. "2026-06-15".
   const START_DATE = "2026-06-08";
   const KEEP_MODE = "earliest";   // "earliest" = first AC per problem in range | "all" = every AC submission
-  const REQUEST_DELAY_MS = 400;   // delay between requests, be polite to avoid rate limits
+  const MIN_DELAY_MS = 800;       // randomized delay between requests (lower bound)
+  const MAX_DELAY_MS = 1600;      // randomized delay between requests (upper bound)
   const LAST_RUN_KEY = "lc_export_last_run_date";
   // -----------------------------------------
 
@@ -42,6 +43,37 @@
 
   function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
+  }
+
+  function rand(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+
+  // Fetch that survives LeetCode's rate limiting: on 403/429 (or a network
+  // error) it waits with exponential backoff + jitter and retries the SAME
+  // request. Returns the final response so the caller decides how to handle a
+  // give-up (the list walk keeps partial data instead of throwing the run away).
+  async function fetchWithRetry(url, opts = {}, label = "request") {
+    const maxAttempts = 5;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      let res;
+      try {
+        res = await fetch(url, opts);
+      } catch (err) {
+        if (attempt === maxAttempts) throw err;
+        const wait = 3000 * 2 ** (attempt - 1) + rand(0, 1000);
+        console.warn(`  [retry] ${label} network error, waiting ${Math.round(wait / 1000)}s (attempt ${attempt}/${maxAttempts})...`);
+        await sleep(wait);
+        continue;
+      }
+      if ((res.status === 403 || res.status === 429) && attempt < maxAttempts) {
+        const wait = 3000 * 2 ** (attempt - 1) + rand(0, 1000);
+        console.warn(`  [throttled] ${label} HTTP ${res.status}, waiting ${Math.round(wait / 1000)}s then retrying (attempt ${attempt}/${maxAttempts})...`);
+        await sleep(wait);
+        continue;
+      }
+      return res;
+    }
   }
 
   function toLocalYMD(d) {
@@ -56,16 +88,21 @@
     return m ? decodeURIComponent(m[1]) : null;
   }
 
-  async function graphql(query, variables) {
-    const res = await fetch("https://leetcode.com/graphql/", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-csrftoken": getCookie("csrftoken") || "",
+  async function graphql(query, variables, label = "graphql") {
+    const res = await fetchWithRetry(
+      "https://leetcode.com/graphql/",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrftoken": getCookie("csrftoken") || "",
+        },
+        credentials: "include",
+        body: JSON.stringify({ query, variables }),
       },
-      credentials: "include",
-      body: JSON.stringify({ query, variables }),
-    });
+      label
+    );
+    if (!res.ok) throw new Error(`GraphQL HTTP ${res.status}`);
     const json = await res.json();
     if (json.errors) {
       console.error("GraphQL error:", json.errors);
@@ -81,17 +118,24 @@
   const limit = 20;
   let lastKey = "";
   let keepGoing = true;
+  let stoppedEarly = false; // set if the walk gives up on a persistent 403
   const candidates = []; // raw entries from /api/submissions/
 
   while (keepGoing) {
-    const url = `https://leetcode.com/api/submissions/?format=json&offset=${offset}&limit=${limit}&last_key=${lastKey}`;
-    const res = await fetch(url, { credentials: "include" });
+    const url = `https://leetcode.com/api/submissions/?format=json&offset=${offset}&limit=${limit}&lastkey=${encodeURIComponent(lastKey)}`;
+    const res = await fetchWithRetry(
+      url,
+      { credentials: "include", headers: { Referer: "https://leetcode.com/submissions/" } },
+      `/api/submissions/ offset=${offset}`
+    );
     if (!res.ok) {
-      throw new Error(
-        `/api/submissions/ returned HTTP ${res.status}. This endpoint may ` +
-          `have moved - check the Network tab on a submissions page and ` +
-          `update the script accordingly.`
+      console.warn(
+        `/api/submissions/ still HTTP ${res.status} at offset ${offset} after retries. ` +
+          `Stopping the walk and keeping the ${candidates.length} submission(s) already ` +
+          `gathered. Re-run later to resume - LeetCode is rate-limiting this endpoint.`
       );
+      stoppedEarly = true;
+      break;
     }
     const data = await res.json();
     const dump = data.submissions_dump || [];
@@ -106,8 +150,8 @@
 
     if (!data.has_next || !keepGoing) break;
     offset += limit;
-    lastKey = data.last_key || "";
-    await sleep(REQUEST_DELAY_MS);
+    lastKey = data.last_key ?? data.lastKey ?? "";
+    await sleep(rand(MIN_DELAY_MS, MAX_DELAY_MS));
   }
 
   console.log(`Found ${candidates.length} submission(s) on/after ${effectiveStartDate} (before filtering).`);
@@ -179,7 +223,7 @@
       console.warn(`  [meta fail] ${slug}:`, e.message);
     }
     metaCache.set(slug, meta);
-    await sleep(REQUEST_DELAY_MS);
+    await sleep(rand(MIN_DELAY_MS, MAX_DELAY_MS));
     return meta;
   }
 
@@ -213,7 +257,7 @@
     } catch (e) {
       console.warn(`  [fail] submission ${sub.id} (${sub.title}):`, e.message);
     }
-    await sleep(REQUEST_DELAY_MS);
+    await sleep(rand(MIN_DELAY_MS, MAX_DELAY_MS));
   }
 
   // ---------------- 4. Output ----------------
