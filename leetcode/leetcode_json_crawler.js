@@ -11,11 +11,14 @@
  *
  * WHAT IT DOES
  * - Walks your global submission feed (newest -> oldest) via the internal
- *   /api/submissions/ endpoint, stopping once it passes START_DATE.
+ *   /api/submissions/ endpoint, stopping once it passes START_DATE. Retries
+ *   with backoff when LeetCode rate-limits (HTTP 403/429) and, if it still
+ *   gives up, keeps whatever it gathered so a re-run can resume.
  * - Keeps only Accepted submissions.
- * - Per KEEP_MODE, keeps either the first AC per problem in range, or all of them.
- * - Fetches full source code + question info per submission via the
- *   internal GraphQL `submissionDetails` query.
+ * - Per KEEP_MODE, keeps the latest AC per problem in range (or all of them).
+ * - Uses the source code already in the feed, falling back to the GraphQL
+ *   `submissionDetails` query only when the feed has no code.
+ * - Adds the frontend number + a ready-to-paste markdown title per problem.
  * - Remembers the date of this run in localStorage, so next time you can
  *   just re-run the script with no edits and it resumes from there.
  *
@@ -253,21 +256,31 @@
       }
 
       const meta = await getQuestionMeta(slug);
+      const frontendId = meta?.questionFrontendId ?? null;
+      const title = meta?.title ?? sub.title;
+      const problemUrl = slug ? `https://leetcode.com/problems/${slug}/` : null;
+      // Ready-to-paste for the future backdated-commit step, e.g.
+      // [2161. Partition Array According to Given Pivot](https://leetcode.com/problems/.../)
+      const markdownTitle =
+        frontendId && problemUrl
+          ? `[${frontendId}. ${title}](${problemUrl})`
+          : null;
 
       results.push({
         date: dateStr,
         timestamp: sub.timestamp,
         questionId: meta?.questionId ?? null,
-        frontendId: meta?.questionFrontendId ?? null,
-        title: meta?.title ?? sub.title,
+        frontendId,
+        title,
         titleSlug: slug,
         language: langName,
         code,
         submissionId: sub.id,
         url: slug ? `https://leetcode.com/problems/${slug}/submissions/${sub.id}/` : null,
+        markdownTitle,
       });
 
-      console.log(`  [ok] ${dateStr} - ${meta?.title ?? sub.title}`);
+      console.log(`  [ok] ${dateStr} - ${title}`);
     } catch (e) {
       console.warn(`  [fail] submission ${sub.id} (${sub.title}):`, e.message);
     }
@@ -282,10 +295,14 @@
     (byDate[r.date] = byDate[r.date] || []).push(r);
   }
 
+  const failedCount = chosen.length - results.length;
   const output = {
     generatedAt: new Date().toISOString(),
     startDate: effectiveStartDate,
     keepMode: KEEP_MODE,
+    walkComplete: !stoppedEarly,
+    attempted: chosen.length,
+    failed: failedCount,
     count: results.length,
     submissions: results,
     byDate,
@@ -316,6 +333,10 @@
   localStorage.setItem(LAST_RUN_KEY, toLocalYMD(new Date()));
 
   window.__leetcodeExport = output; // also available in console as a JS object
-  console.log(`Done. ${results.length} problem(s) exported. File downloaded.`);
-  console.log("Data also available in console as: window.__leetcodeExport");
+  console.log(
+    `Done. Exported ${results.length}/${chosen.length} problem(s)` +
+      (failedCount ? `, ${failedCount} failed` : "") +
+      `. List walk ${stoppedEarly ? "STOPPED EARLY (rate-limited - re-run to resume)" : "completed"}.`
+  );
+  console.log("File downloaded. Data also available in console as: window.__leetcodeExport");
 })();
