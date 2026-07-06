@@ -23,6 +23,8 @@ The crawler emits a ``datetime`` field in ISO 8601 with timezone offset
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -118,6 +120,48 @@ def write_solution_file(target_dir, sub):
     return path, "written"
 
 
+def commit_message_for(sub):
+    """Render COMMIT_MESSAGE_TEMPLATE for a submission."""
+    fields = {
+        "frontendId": sub.get("frontendId") or "",
+        "title": sub.get("title") or sub.get("titleSlug") or "",
+        "titleSlug": sub.get("titleSlug") or "",
+        "language": sub.get("language") or "",
+        "date": sub.get("date") or "",
+        "time": sub.get("time") or "",
+    }
+    return COMMIT_MESSAGE_TEMPLATE.format(**fields).strip()
+
+
+def commit_date_for(sub):
+    """The date git should stamp on the commit (ISO 8601, git-compatible)."""
+    return sub.get("datetime") or sub.get("date") or ""
+
+
+def git_commit_backdated(repo_dir, path, message, date_str):
+    """Stage ``path`` and commit it with author+committer date set to ``date_str``.
+
+    Returns True if a commit was made, False if there was nothing to commit.
+    """
+    subprocess.run(["git", "add", str(path)], cwd=repo_dir, check=True)
+
+    # Nothing staged (identical to HEAD) -> skip to avoid an empty commit.
+    if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=repo_dir).returncode == 0:
+        return False
+
+    env = os.environ.copy()
+    env["GIT_AUTHOR_DATE"] = date_str
+    env["GIT_COMMITTER_DATE"] = date_str
+    subprocess.run(
+        ["git", "commit", "-m", message],
+        cwd=repo_dir,
+        env=env,
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    return True
+
+
 def load_submissions(json_path):
     """Load the export and return its submissions sorted oldest-first.
 
@@ -155,22 +199,39 @@ def main(argv=None):
     submissions = load_submissions(json_path)
     print(f"Loaded {len(submissions)} submission(s) from {json_path}\n")
 
-    target_dir = Path(".")
-    written = unchanged = skipped = 0
+    repo_dir = Path(".")
+    committed = unchanged = skipped = failed = 0
     for sub in submissions:
-        path, status = write_solution_file(target_dir, sub)
-        if status == "written":
-            written += 1
-        elif status == "unchanged":
-            unchanged += 1
-        else:
+        path, status = write_solution_file(repo_dir, sub)
+        stamp = f"{sub.get('date')} {sub.get('time', '')}"
+        if status == "skipped":
             skipped += 1
-        label = path.name if path else filename_for(sub)
-        print(f"  [{status}] {sub.get('date')} {sub.get('time', '')} - {label}")
+            print(f"  [skip] {stamp} - {filename_for(sub)} (no code)")
+            continue
+        if status == "unchanged":
+            unchanged += 1
+            print(f"  [unchanged] {stamp} - {path.name}")
+            continue
+
+        try:
+            made = git_commit_backdated(
+                repo_dir, path, commit_message_for(sub), commit_date_for(sub)
+            )
+        except subprocess.CalledProcessError as e:
+            failed += 1
+            print(f"  [fail] {stamp} - {path.name}: {e}")
+            continue
+
+        if made:
+            committed += 1
+            print(f"  [commit] {stamp} - {path.name}")
+        else:
+            unchanged += 1
+            print(f"  [unchanged] {stamp} - {path.name}")
 
     print(
-        f"\nDone. {written} written, {unchanged} unchanged, {skipped} skipped "
-        f"(no code)."
+        f"\nDone. {committed} committed, {unchanged} unchanged, "
+        f"{skipped} skipped (no code), {failed} failed."
     )
     return 0
 
