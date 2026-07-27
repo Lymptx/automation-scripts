@@ -28,9 +28,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Commit message for each solution. Available fields: frontendId, title,
-# titleSlug, language, date, time.
-COMMIT_MESSAGE_TEMPLATE = "{frontendId}. {title}"
+# Commit message = the text of the problem's markdown title, i.e. the frontend
+# number and title ("2161. Partition Array According to Given Pivot"). If a
+# problem has no frontend number, the message is just the title.
 
 # LeetCode language name -> source file extension.
 LANG_EXTENSIONS = {
@@ -121,16 +121,10 @@ def write_solution_file(target_dir, sub):
 
 
 def commit_message_for(sub):
-    """Render COMMIT_MESSAGE_TEMPLATE for a submission."""
-    fields = {
-        "frontendId": sub.get("frontendId") or "",
-        "title": sub.get("title") or sub.get("titleSlug") or "",
-        "titleSlug": sub.get("titleSlug") or "",
-        "language": sub.get("language") or "",
-        "date": sub.get("date") or "",
-        "time": sub.get("time") or "",
-    }
-    return COMMIT_MESSAGE_TEMPLATE.format(**fields).strip()
+    """'<frontendId>. <title>', or just the title when there is no number."""
+    frontend_id = sub.get("frontendId")
+    title = sub.get("title") or sub.get("titleSlug") or "untitled"
+    return f"{frontend_id}. {title}" if frontend_id else title
 
 
 def commit_date_for(sub):
